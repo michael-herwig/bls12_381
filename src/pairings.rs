@@ -8,10 +8,10 @@ use core::borrow::Borrow;
 use core::fmt;
 use core::iter::Sum;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
-use group::Group;
+use group::{Group, GroupEncoding};
 use pairing::{Engine, PairingCurveAffine};
 use rand_core::RngCore;
-use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
+use subtle::{Choice, CtOption, ConditionallySelectable, ConstantTimeEq};
 
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
@@ -255,6 +255,63 @@ impl Gt {
     pub fn double(&self) -> Gt {
         Gt(self.0.square())
     }
+
+     ///  Converts to canonical byte representation.
+     pub fn to_bytes(&self) -> [u8; 48 * 12] {
+        let mut reval = [0; 48 * 12];
+        reval[(0 * 48)..(1 * 48)].copy_from_slice(&self.0.c0.c0.c0.to_bytes());
+        reval[(1 * 48)..(2 * 48)].copy_from_slice(&self.0.c0.c0.c1.to_bytes());
+        reval[(2 * 48)..(3 * 48)].copy_from_slice(&self.0.c0.c1.c0.to_bytes());
+        reval[(3 * 48)..(4 * 48)].copy_from_slice(&self.0.c0.c1.c1.to_bytes());
+        reval[(4 * 48)..(5 * 48)].copy_from_slice(&self.0.c0.c2.c0.to_bytes());
+        reval[(5 * 48)..(6 * 48)].copy_from_slice(&self.0.c0.c2.c1.to_bytes());
+        reval[(6 * 48)..(7 * 48)].copy_from_slice(&self.0.c1.c0.c0.to_bytes());
+        reval[(7 * 48)..(8 * 48)].copy_from_slice(&self.0.c1.c0.c1.to_bytes());
+        reval[(8 * 48)..(9 * 48)].copy_from_slice(&self.0.c1.c1.c0.to_bytes());
+        reval[(9 * 48)..(10 * 48)].copy_from_slice(&self.0.c1.c1.c1.to_bytes());
+        reval[(10 * 48)..(11 * 48)].copy_from_slice(&self.0.c1.c2.c0.to_bytes());
+        reval[(11 * 48)..(12 * 48)].copy_from_slice(&self.0.c1.c2.c1.to_bytes());
+        reval
+    }
+
+    /// Reads a group element from canonical byte representation.
+    #[rustfmt::skip]
+    pub fn from_bytes(bytes: &[u8; 48 * 12]) -> CtOption<Self> {
+        fn fp_from_bytes(bytes: &[u8], index : usize) -> CtOption<Fp> {
+            match bytes[(index * 48)..((index + 1) * 48)].try_into() {
+                Ok(bytes) => Fp::from_bytes(&bytes),
+                Err(_) => subtle::CtOption::new(Fp::zero(), Choice::from(0u8)),
+            }
+        }
+
+        fp_from_bytes(bytes, 0).and_then(|c000| {
+        fp_from_bytes(bytes, 1).and_then(|c001 | {
+        fp_from_bytes(bytes, 2).and_then(|c010 | {
+        fp_from_bytes(bytes,3).and_then(|c011 | {
+        fp_from_bytes(bytes, 4).and_then(|c020 | {
+        fp_from_bytes(bytes, 5).and_then(|c021 | {
+        fp_from_bytes(bytes, 6).and_then(|c100 | {
+        fp_from_bytes(bytes, 7).and_then(|c101 | {
+        fp_from_bytes(bytes, 8).and_then(|c110 | {
+        fp_from_bytes(bytes, 9).and_then(|c111 | {
+        fp_from_bytes(bytes, 10).and_then(|c120 | {
+        fp_from_bytes(bytes, 11).and_then(|c121 | {
+            let mut reval: Self = Default::default();
+            reval.0.c0.c0.c0 = c000;
+            reval.0.c0.c0.c1 = c001;
+            reval.0.c0.c1.c0 = c010;
+            reval.0.c0.c1.c1 = c011;
+            reval.0.c0.c2.c0 = c020;
+            reval.0.c0.c2.c1 = c021;
+            reval.0.c1.c0.c0 = c100;
+            reval.0.c1.c0.c1 = c101;
+            reval.0.c1.c1.c0 = c110;
+            reval.0.c1.c1.c1 = c111;
+            reval.0.c1.c2.c0 = c120;
+            reval.0.c1.c2.c1 = c121;
+            subtle::CtOption::new(reval, Choice::from(1u8))
+        })})})})})})})})})})})})
+    }
 }
 
 impl<'a> Neg for &'a Gt {
@@ -481,6 +538,52 @@ impl Group for Gt {
     #[must_use]
     fn double(&self) -> Self {
         self.double()
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct GtEncoding([u8; 48 * 12]);
+
+impl fmt::Debug for GtEncoding {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0[..].fmt(f)
+    }
+}
+
+impl Default for GtEncoding {
+    fn default() -> Self {
+        Self([0; 48 * 12])
+    }
+}
+
+#[cfg(feature = "zeroize")]
+impl zeroize::DefaultIsZeroes for GtEncoding {}
+
+impl AsRef<[u8]> for GtEncoding {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl AsMut<[u8]> for GtEncoding {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
+impl GroupEncoding for Gt {
+    type Repr = GtEncoding;
+
+    fn from_bytes(bytes: &Self::Repr) -> CtOption<Self> {
+        Gt::from_bytes(&bytes.0)
+    }
+
+    fn from_bytes_unchecked(bytes: &Self::Repr) -> CtOption<Self> {
+        Gt::from_bytes(&bytes.0).into()
+    }
+
+    fn to_bytes(&self) -> Self::Repr {
+        GtEncoding(self.to_bytes())
     }
 }
 
@@ -829,6 +932,15 @@ fn test_gt_generator() {
         Gt::generator(),
         pairing(&G1Affine::generator(), &G2Affine::generator())
     );
+}
+
+#[test]
+fn test_gt_binary() {
+    let g_orig = Gt::generator() * Scalar::from_raw([1, 2, 3, 4]).invert().unwrap().square();
+    let g_blob = g_orig.to_bytes();
+    let g_from = Gt::from_bytes(&g_blob).unwrap();
+
+    assert_eq!(g_orig, g_from);
 }
 
 #[test]
